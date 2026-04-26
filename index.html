@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Lineup Manager</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #273449;
+      --border: #334155;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --pitch-dark: #14532d;
+      --pitch-light: #166534;
+      --pitch-line: rgba(255,255,255,0.12);
+      --accent: #22c55e;
+      --selected-ring: #facc15;
+      --warn: #f97316;
+
+      --t0: #dc2626;
+      --t1: #ea580c;
+      --t2: #eab308;
+      --t3: #3b82f6;
+      --t4: #64748b;
+      --t5: #475569;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+      font-size: 14px;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+    }
+
+    #app {
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 24px;
+    }
+
+    /* ── HEADER ── */
+    #header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    #header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    #header h1 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    #header-date {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    #formation-toggle {
+      display: flex;
+      gap: 6px;
+    }
+
+    .formation-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-appearance: none;
+    }
+
+    .formation-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #052e16;
+    }
+
+    /* ── PITCH ── */
+    #pitch-wrap {
+      position: relative;
+      background: linear-gradient(180deg, var(--pitch-dark) 0%, var(--pitch-light) 100%);
+      padding: 12px 8px;
+      flex-shrink: 0;
+    }
+
+    /* pitch markings */
+    #pitch-wrap::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        /* center circle */
+        radial-gradient(circle at 50% 50%, transparent 40px, var(--pitch-line) 40px, var(--pitch-line) 42px, transparent 42px),
+        /* halfway line */
+        linear-gradient(transparent calc(50% - 1px), var(--pitch-line) calc(50% - 1px), var(--pitch-line) calc(50% + 1px), transparent calc(50% + 1px));
+      pointer-events: none;
+    }
+
+    #pitch-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .pitch-row {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    /* ── SLOT ── */
+    .slot {
+      min-width: 64px;
+      min-height: 56px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.1s, box-shadow 0.1s;
+      user-select: none;
+    }
+
+    .slot.empty {
+      border: 2px dashed rgba(255,255,255,0.3);
+      background: rgba(0,0,0,0.2);
+    }
+
+    .slot.empty .slot-label {
+      color: rgba(255,255,255,0.45);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .slot.filled {
+      background: rgba(0,0,0,0.45);
+      border: 2px solid rgba(255,255,255,0.15);
+    }
+
+    .slot.filled .slot-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.45);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
+    .slot.mismatch {
+      border-color: var(--warn) !important;
+      background: rgba(249,115,22,0.15) !important;
+    }
+
+    .slot.selected-target {
+      border-color: var(--selected-ring) !important;
+      box-shadow: 0 0 0 2px var(--selected-ring);
+      background: rgba(250,204,21,0.1) !important;
+    }
+
+    .slot:active {
+      transform: scale(0.95);
+    }
+
+    /* ── PLAYER CHIP ── */
+    .player-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .chip-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      text-align: center;
+      line-height: 1.2;
+      max-width: 60px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chip-tier {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* selected state */
+    .slot.is-selected {
+      box-shadow: 0 0 0 3px var(--selected-ring), 0 0 12px rgba(250,204,21,0.4);
+      border-color: var(--selected-ring) !important;
+      animation: pulse-ring 1.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse-ring {
+      0%, 100% { box-shadow: 0 0 0 3px var(--selected-ring), 0 0 12px rgba(250,204,21,0.4); }
+      50% { box-shadow: 0 0 0 5px var(--selected-ring), 0 0 20px rgba(250,204,21,0.6); }
+    }
+
+    /* drag styles */
+    .slot.drag-over {
+      border-color: var(--accent) !important;
+      background: rgba(34,197,94,0.15) !important;
+    }
+
+    /* ── BENCH ── */
+    #bench-section {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 12px;
+    }
+
+    #bench-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+
+    #bench-row {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    #bench-row::-webkit-scrollbar { display: none; }
+
+    .bench-chip {
+      flex-shrink: 0;
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      min-width: 56px;
+      transition: transform 0.1s;
+      user-select: none;
+    }
+
+    .bench-chip:active { transform: scale(0.95); }
+
+    .bench-chip.is-selected {
+      border-color: var(--selected-ring);
+      background: rgba(250,204,21,0.1);
+      animation: pulse-ring 1.4s ease-in-out infinite;
+    }
+
+    .bench-chip-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .bench-chip-pos {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    /* ── MATCH INFO ── */
+    #match-section {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .match-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .match-row label {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+      min-width: 52px;
+    }
+
+    .match-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .match-input:focus { border-color: var(--accent); }
+
+    #save-btn, #load-btn, #reset-btn {
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: #052e16;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 9px 16px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.15s;
+    }
+
+    #load-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    #reset-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--warn);
+    }
+
+    #save-btn:active, #load-btn:active, #reset-btn:active { opacity: 0.75; }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    #save-status {
+      font-size: 11px;
+      color: var(--accent);
+      text-align: center;
+      min-height: 16px;
+    }
+
+    /* ── XI SUMMARY ── */
+    #xi-summary {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+
+    #xi-summary strong {
+      color: var(--text);
+    }
+
+    /* ── LOAD MODAL ── */
+    #load-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(0,0,0,0.7);
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    #load-modal.open { display: flex; }
+
+    #load-modal-inner {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0;
+      width: 100%;
+      max-width: 480px;
+      padding: 16px;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+
+    #load-modal h3 {
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
+
+    .saved-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    .saved-item:hover { border-color: var(--accent); }
+
+    .saved-item-date {
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .saved-item-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    #modal-close {
+      width: 100%;
+      margin-top: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-muted);
+      padding: 10px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    /* toast */
+    #toast {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: 20px;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      transition: transform 0.25s ease;
+      z-index: 300;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #toast.show { transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <div id="header">
+    <div id="header-top">
+      <div>
+        <h1>Lineup Manager</h1>
+        <div id="header-date"></div>
+      </div>
+      <div id="formation-toggle">
+        <button class="formation-btn active" data-f="4-3-3">4-3-3</button>
+        <button class="formation-btn" data-f="4-2-3-2">4-2-3-2</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PITCH -->
+  <div id="pitch-wrap">
+    <div id="pitch-rows"></div>
+  </div>
+
+  <!-- BENCH -->
+  <div id="bench-section">
+    <div id="bench-label">Bench</div>
+    <div id="bench-row"></div>
+  </div>
+
+  <!-- MATCH INFO -->
+  <div id="match-section">
+    <div class="match-row">
+      <label>vs.</label>
+      <input class="match-input" id="opponent-input" type="text" placeholder="Opponent team" autocomplete="off" />
+    </div>
+    <div class="match-row">
+      <label>Date</label>
+      <input class="match-input" id="date-input" type="date" />
+    </div>
+    <div id="xi-summary"></div>
+    <div class="btn-row">
+      <button id="save-btn">Save Lineup</button>
+      <button id="load-btn">Load</button>
+      <button id="reset-btn">Reset</button>
+    </div>
+    <div id="save-status"></div>
+  </div>
+
+</div>
+
+<!-- LOAD MODAL -->
+<div id="load-modal">
+  <div id="load-modal-inner">
+    <h3>Saved Lineups</h3>
+    <div id="saved-list"></div>
+    <button id="modal-close">Close</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// DATA
+// ─────────────────────────────────────────────
+
+const ROSTER = [
+  { name: "Sam Mosaddegh",     first: "Sam",      tier: 3, positions: ["GK"] },
+  { name: "Russell",           first: "Russell",  tier: 0, positions: ["Central Midfielder"] },
+  { name: "Bobak",             first: "Bobak",    tier: 1, positions: ["CAM","CDM","Central Midfielder"] },
+  { name: "Minseop",           first: "Minseop",  tier: 1, positions: ["CAM","Striker"] },
+  { name: "Luis",              first: "Luis",     tier: 2, positions: ["CB","CDM","Central Midfielder"] },
+  { name: "Jimmy Longele",     first: "Jimmy",    tier: 2, positions: ["Striker"] },
+  { name: "John Ward",         first: "J.Ward",   tier: 2, positions: ["Central Midfielder"] },
+  { name: "John O'Hearn",      first: "J.O'H",    tier: 3, positions: ["CB"] },
+  { name: "Phong",             first: "Phong",    tier: 2, positions: ["FB","W"] },
+  { name: "Jonny Wood",        first: "Jonny",    tier: 3, positions: ["FB","W"] },
+  { name: "Pierre",            first: "Pierre",   tier: 3, positions: ["FB","W"] },
+  { name: "Rhys Dowbiggin",    first: "Rhys",     tier: 3, positions: ["W"] },
+  { name: "Afolabi Sanni",     first: "Afolabi",  tier: 3, positions: ["Striker"] },
+  { name: "Louis Gionet",      first: "Louis",    tier: 3, positions: ["CB"] },
+  { name: "Hamed",             first: "Hamed",    tier: 4, positions: ["CDM","Central Midfielder","W"] },
+  { name: "Andres Hernandez",  first: "Andres",   tier: 3, positions: ["Central Midfielder","Striker"] },
+  { name: "Alex Brown",        first: "A.Brown",  tier: 3, positions: ["CAM","Striker"] },
+  { name: "Josh Smith",        first: "Josh",     tier: 4, positions: ["CB"] },
+  { name: "John Chilibeck",    first: "Chilibeck",tier: 5, positions: ["Central Midfielder","FB","W"] },
+  { name: "Gavin Brown",       first: "Gavin",    tier: 5, positions: ["CB","FB"] },
+];
+
+const POSITION_GROUPS = {
+  GK: ["GK"],
+  CB: ["CB"],
+  FB: ["FB"],
+  CM: ["Central Midfielder","CDM","CAM"],
+  W:  ["W"],
+  ST: ["Striker"],
+};
+
+// formations: array of rows (attack at top), each row = array of slot defs {label, group}
+const FORMATIONS = {
+  "4-3-3": [
+    [{ label: "ST",  group: "ST" }],
+    [{ label: "LW",  group: "W"  }, { label: "RW",  group: "W"  }],
+    [{ label: "CM",  group: "CM" }, { label: "CM",  group: "CM" }, { label: "CM",  group: "CM" }],
+    [{ label: "LB",  group: "FB" }, { label: "RB",  group: "FB" }],
+    [{ label: "CB",  group: "CB" }, { label: "CB",  group: "CB" }],
+    [{ label: "GK",  group: "GK" }],
+  ],
+  "4-2-3-2": [
+    [{ label: "ST",  group: "ST" }, { label: "ST",  group: "ST" }],
+    [{ label: "LW",  group: "W"  }, { label: "CAM", group: "CM" }, { label: "RW",  group: "W"  }],
+    [{ label: "CDM", group: "CM" }, { label: "CDM", group: "CM" }],
+    [{ label: "LB",  group: "FB" }, { label: "CB",  group: "CB" }, { label: "CB",  group: "CB" }, { label: "RB",  group: "FB" }],
+    [{ label: "GK",  group: "GK" }],
+  ],
+};
+
+const TIER_COLORS = { 0: "#dc2626", 1: "#ea580c", 2: "#eab308", 3: "#3b82f6", 4: "#64748b", 5: "#475569" };
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+
+let currentFormation = "4-3-3";
+// slots: array matching flattened formation slots, each: {label, group, player: rosterIdx|null}
+let slots = [];
+let benchPlayers = []; // roster indices on bench
+let selectedSource = null; // {type:'slot'|'bench', idx:number}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
+function playerFitsGroup(player, group) {
+  const groupPositions = POSITION_GROUPS[group];
+  return player.positions.some(p => groupPositions.includes(p));
+}
+
+function buildSlots(formationKey) {
+  const rows = FORMATIONS[formationKey];
+  const result = [];
+  for (const row of rows) {
+    for (const slotDef of row) {
+      result.push({ label: slotDef.label, group: slotDef.group, player: null });
+    }
+  }
+  return result;
+}
+
+function autoAssign(slotArr) {
+  // Reset
+  slotArr.forEach(s => s.player = null);
+
+  // Build ordered groups: GK first, then CB, FB, CM, W, ST
+  const priority = ["GK", "CB", "FB", "CM", "W", "ST"];
+  const available = new Set(ROSTER.map((_, i) => i));
+
+  for (const group of priority) {
+    const groupSlots = slotArr
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => s.group === group && s.player === null);
+
+    // candidates: players that fit, sorted by tier asc
+    const candidates = [...available]
+      .filter(ri => playerFitsGroup(ROSTER[ri], group))
+      .sort((a, b) => ROSTER[a].tier - ROSTER[b].tier);
+
+    for (const { s, i } of groupSlots) {
+      if (candidates.length === 0) break;
+      const best = candidates.shift();
+      s.player = best;
+      available.delete(best);
+    }
+  }
+
+  return [...available]; // bench
+}
+
+function initFormation(formationKey, restore = null) {
+  currentFormation = formationKey;
+  slots = buildSlots(formationKey);
+
+  if (restore) {
+    // restore saved slot assignments
+    restore.slots.forEach((saved, i) => {
+      if (i < slots.length && saved.player !== null) {
+        slots[i].player = saved.player;
+      }
+    });
+    benchPlayers = restore.bench || [];
+  } else {
+    benchPlayers = autoAssign(slots);
+  }
+  selectedSource = null;
+}
+
+// ─────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────
+
+function tierDot(tier) {
+  const color = TIER_COLORS[tier] ?? "#475569";
+  return `<span class="chip-tier" style="background:${color}"></span>`;
+}
+
+function renderPitch() {
+  const pitchRows = document.getElementById("pitch-rows");
+  const rows = FORMATIONS[currentFormation];
+  let slotIdx = 0;
+  let html = "";
+
+  for (const row of rows) {
+    html += `<div class="pitch-row">`;
+    for (const slotDef of row) {
+      const slot = slots[slotIdx];
+      const si = slotIdx;
+      const isSelected = selectedSource && selectedSource.type === "slot" && selectedSource.idx === si;
+      const isTarget = selectedSource && !(selectedSource.type === "slot" && selectedSource.idx === si);
+      const hasMismatch = slot.player !== null && !playerFitsGroup(ROSTER[slot.player], slot.group);
+
+      let cls = "slot";
+      if (slot.player === null) {
+        cls += " empty";
+        if (isTarget) cls += " selected-target";
+      } else {
+        cls += " filled";
+        if (isSelected) cls += " is-selected";
+        if (isTarget) cls += " selected-target";
+        if (hasMismatch) cls += " mismatch";
+      }
+
+      html += `<div class="${cls}" data-slot="${si}" draggable="true">`;
+      html += `<span class="slot-label">${slotDef.label}</span>`;
+      if (slot.player !== null) {
+        const p = ROSTER[slot.player];
+        html += `<div class="player-chip">${tierDot(p.tier)}<span class="chip-name">${p.first}</span></div>`;
+      }
+      html += `</div>`;
+      slotIdx++;
+    }
+    html += `</div>`;
+  }
+
+  pitchRows.innerHTML = html;
+  attachSlotEvents();
+}
+
+function renderBench() {
+  const benchRow = document.getElementById("bench-row");
+  if (benchPlayers.length === 0) {
+    benchRow.innerHTML = `<span style="color:var(--text-muted);font-size:12px;padding:4px 0;">All players assigned</span>`;
+    return;
+  }
+  let html = "";
+  benchPlayers.forEach((ri, bi) => {
+    const p = ROSTER[ri];
+    const isSelected = selectedSource && selectedSource.type === "bench" && selectedSource.idx === bi;
+    const posAbbr = p.positions[0].replace("Central Midfielder","CM").replace("Striker","ST").replace("Goalkeeper","GK");
+    const color = TIER_COLORS[p.tier] ?? "#475569";
+    html += `<div class="bench-chip${isSelected ? " is-selected" : ""}" data-bench="${bi}" draggable="true">
+      <span class="bench-chip-name">${p.first}</span>
+      <span style="display:flex;align-items:center;gap:3px;">
+        <span class="chip-tier" style="background:${color}"></span>
+        <span class="bench-chip-pos">${posAbbr}</span>
+      </span>
+    </div>`;
+  });
+  benchRow.innerHTML = html;
+  attachBenchEvents();
+}
+
+function renderXISummary() {
+  const el = document.getElementById("xi-summary");
+  const grouped = { GK: [], CB: [], FB: [], CM: [], W: [], ST: [] };
+  slots.forEach(s => {
+    if (s.player !== null) {
+      grouped[s.group].push(ROSTER[s.player].name.split(" ")[0]);
+    }
+  });
+  const lines = [];
+  if (grouped.GK.length) lines.push(`<strong>GK:</strong> ${grouped.GK.join(", ")}`);
+  if (grouped.CB.length) lines.push(`<strong>CB:</strong> ${grouped.CB.join(", ")}`);
+  if (grouped.FB.length) lines.push(`<strong>FB:</strong> ${grouped.FB.join(", ")}`);
+  if (grouped.CM.length) lines.push(`<strong>CM:</strong> ${grouped.CM.join(", ")}`);
+  if (grouped.W.length)  lines.push(`<strong>W:</strong> ${grouped.W.join(", ")}`);
+  if (grouped.ST.length) lines.push(`<strong>ST:</strong> ${grouped.ST.join(", ")}`);
+  const total = slots.filter(s => s.player !== null).length;
+  el.innerHTML = lines.join(" · ") + `<br><span style="color:var(--text-muted);font-size:10px;">${total}/11 starters</span>`;
+}
+
+function render() {
+  renderPitch();
+  renderBench();
+  renderXISummary();
+}
+
+// ─────────────────────────────────────────────
+// INTERACTION
+// ─────────────────────────────────────────────
+
+function handleSlotTap(si) {
+  if (!selectedSource) {
+    // select this slot only if it has a player
+    if (slots[si].player !== null) {
+      selectedSource = { type: "slot", idx: si };
+    }
+    render();
+    return;
+  }
+
+  // Something is already selected
+  if (selectedSource.type === "slot") {
+    const fromIdx = selectedSource.idx;
+    if (fromIdx === si) {
+      // deselect
+      selectedSource = null;
+    } else {
+      // swap slot players
+      const tmp = slots[si].player;
+      slots[si].player = slots[fromIdx].player;
+      slots[fromIdx].player = tmp;
+      selectedSource = null;
+      autoSave();
+    }
+  } else {
+    // bench player → slot
+    const benchIdx = selectedSource.idx;
+    const rosterIdx = benchPlayers[benchIdx];
+    const existingPlayer = slots[si].player;
+
+    slots[si].player = rosterIdx;
+    benchPlayers.splice(benchIdx, 1);
+    if (existingPlayer !== null) {
+      benchPlayers.push(existingPlayer);
+    }
+    selectedSource = null;
+    autoSave();
+  }
+  render();
+}
+
+function handleBenchTap(bi) {
+  if (!selectedSource) {
+    selectedSource = { type: "bench", idx: bi };
+    render();
+    return;
+  }
+
+  if (selectedSource.type === "bench") {
+    if (selectedSource.idx === bi) {
+      selectedSource = null;
+    } else {
+      selectedSource = { type: "bench", idx: bi };
+    }
+    render();
+    return;
+  }
+
+  // slot selected → tap bench = swap to bench
+  if (selectedSource.type === "slot") {
+    const fromSlot = selectedSource.idx;
+    const fromRosterIdx = slots[fromSlot].player;
+    const toRosterIdx = benchPlayers[bi];
+
+    slots[fromSlot].player = toRosterIdx;
+    benchPlayers[bi] = fromRosterIdx;
+    selectedSource = null;
+    autoSave();
+    render();
+  }
+}
+
+// ── Touch events ──
+
+function attachSlotEvents() {
+  document.querySelectorAll(".slot").forEach(el => {
+    const si = parseInt(el.dataset.slot);
+
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      handleSlotTap(si);
+    });
+
+    // Drag source
+    el.addEventListener("dragstart", e => {
+      if (slots[si].player === null) { e.preventDefault(); return; }
+      e.dataTransfer.setData("text/plain", JSON.stringify({ type: "slot", idx: si }));
+      e.dataTransfer.effectAllowed = "move";
+    });
+
+    el.addEventListener("dragover", e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      el.classList.add("drag-over");
+    });
+
+    el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
+
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      el.classList.remove("drag-over");
+      try {
+        const data = JSON.parse(e.dataTransfer.getData("text/plain"));
+        if (data.type === "slot") {
+          const fromIdx = data.idx;
+          if (fromIdx === si) return;
+          const tmp = slots[si].player;
+          slots[si].player = slots[fromIdx].player;
+          slots[fromIdx].player = tmp;
+        } else {
+          // bench
+          const benchIdx = data.idx;
+          const rosterIdx = benchPlayers[benchIdx];
+          const existing = slots[si].player;
+          slots[si].player = rosterIdx;
+          benchPlayers.splice(benchIdx, 1);
+          if (existing !== null) benchPlayers.push(existing);
+        }
+        autoSave();
+        render();
+      } catch(err) {}
+    });
+  });
+}
+
+function attachBenchEvents() {
+  document.querySelectorAll(".bench-chip").forEach(el => {
+    const bi = parseInt(el.dataset.bench);
+
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      handleBenchTap(bi);
+    });
+
+    el.addEventListener("dragstart", e => {
+      e.dataTransfer.setData("text/plain", JSON.stringify({ type: "bench", idx: bi }));
+      e.dataTransfer.effectAllowed = "move";
+    });
+  });
+}
+
+// Dismiss selection when tapping background
+document.addEventListener("click", () => {
+  if (selectedSource) {
+    selectedSource = null;
+    render();
+  }
+});
+
+// ─────────────────────────────────────────────
+// PERSISTENCE
+// ─────────────────────────────────────────────
+
+const LS_PREFIX = "lineup_";
+const MAX_SAVED = 10;
+
+function getSavedKeys() {
+  return Object.keys(localStorage)
+    .filter(k => k.startsWith(LS_PREFIX))
+    .sort()
+    .reverse()
+    .slice(0, MAX_SAVED);
+}
+
+function autoSave() {
+  const dateVal = document.getElementById("date-input").value || todayStr();
+  const key = LS_PREFIX + dateVal;
+  const data = {
+    formation: currentFormation,
+    opponent: document.getElementById("opponent-input").value,
+    date: dateVal,
+    slots: slots.map(s => ({ label: s.label, group: s.group, player: s.player })),
+    bench: benchPlayers,
+    savedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(key, JSON.stringify(data));
+  // prune old
+  const keys = getSavedKeys();
+  if (keys.length > MAX_SAVED) {
+    keys.slice(MAX_SAVED).forEach(k => localStorage.removeItem(k));
+  }
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadLatest() {
+  const keys = getSavedKeys();
+  if (!keys.length) return false;
+  const data = JSON.parse(localStorage.getItem(keys[0]));
+  restoreData(data);
+  return true;
+}
+
+function restoreData(data) {
+  document.getElementById("opponent-input").value = data.opponent || "";
+  document.getElementById("date-input").value = data.date || todayStr();
+  initFormation(data.formation || "4-3-3", data);
+  // Update formation buttons
+  document.querySelectorAll(".formation-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.f === currentFormation);
+  });
+  render();
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2000);
+}
+
+// ─────────────────────────────────────────────
+// CONTROLS
+// ─────────────────────────────────────────────
+
+document.querySelectorAll(".formation-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.f === currentFormation) return;
+    document.querySelectorAll(".formation-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    initFormation(btn.dataset.f);
+    render();
+    autoSave();
+  });
+});
+
+document.getElementById("save-btn").addEventListener("click", () => {
+  autoSave();
+  showToast("Lineup saved!");
+});
+
+document.getElementById("reset-btn").addEventListener("click", () => {
+  initFormation(currentFormation);
+  render();
+  showToast("Lineup reset");
+});
+
+document.getElementById("date-input").addEventListener("change", () => autoSave());
+document.getElementById("opponent-input").addEventListener("input", () => autoSave());
+
+// ── Load modal ──
+document.getElementById("load-btn").addEventListener("click", () => {
+  const keys = getSavedKeys();
+  const listEl = document.getElementById("saved-list");
+  if (!keys.length) {
+    listEl.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">No saved lineups yet.</p>`;
+  } else {
+    listEl.innerHTML = keys.map(k => {
+      const data = JSON.parse(localStorage.getItem(k));
+      const opp = data.opponent ? `vs. ${data.opponent}` : "No opponent";
+      const starters = (data.slots || []).filter(s => s.player !== null).length;
+      return `<div class="saved-item" data-key="${k}">
+        <div class="saved-item-date">${data.date || k.replace(LS_PREFIX,"")} — ${data.formation || "4-3-3"}</div>
+        <div class="saved-item-meta">${opp} · ${starters}/11 players</div>
+      </div>`;
+    }).join("");
+    listEl.querySelectorAll(".saved-item").forEach(item => {
+      item.addEventListener("click", () => {
+        const data = JSON.parse(localStorage.getItem(item.dataset.key));
+        restoreData(data);
+        document.getElementById("load-modal").classList.remove("open");
+        showToast("Lineup loaded");
+      });
+    });
+  }
+  document.getElementById("load-modal").classList.add("open");
+});
+
+document.getElementById("modal-close").addEventListener("click", () => {
+  document.getElementById("load-modal").classList.remove("open");
+});
+
+document.getElementById("load-modal").addEventListener("click", e => {
+  if (e.target === document.getElementById("load-modal")) {
+    document.getElementById("load-modal").classList.remove("open");
+  }
+});
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+
+document.getElementById("header-date").textContent = new Date().toLocaleDateString("en-CA", {
+  weekday: "short", year: "numeric", month: "short", day: "numeric"
+});
+document.getElementById("date-input").value = todayStr();
+
+// Try load latest, else auto-assign
+if (!loadLatest()) {
+  initFormation("4-3-3");
+  render();
+}
+</script>
+</body>
+</html>
