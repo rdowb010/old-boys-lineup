@@ -245,7 +245,7 @@
     .promote-btn {
       position: absolute;
       top: 1px;
-      right: 2px;
+      left: 2px;
       width: 14px;
       height: 14px;
       border-radius: 50%;
@@ -258,6 +258,26 @@
       cursor: pointer;
       border: none;
       padding: 0;
+      z-index: 2;
+    }
+
+    .remove-btn {
+      position: absolute;
+      top: 1px;
+      right: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: rgba(220,38,38,0.7);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 12px;
+      text-align: center;
+      cursor: pointer;
+      border: none;
+      padding: 0;
+      z-index: 2;
     }
 
     .chip-tier {
@@ -646,12 +666,14 @@ const TIER_COLORS = { 0: "#dc2626", 1: "#ea580c", 2: "#eab308", 3: "#3b82f6", 4:
 
 let currentFormation = "4-3-3";
 // slots: flattened, each: {label, group, players: rosterIdx[]}  (index 0 = primary, 1+ = backups)
+// A player can be primary at only ONE slot, but a backup at multiple slots.
 let slots = [];
-let benchPlayers = []; // roster indices on bench
-// selectedSource:
-//   {type:'chip', slot:number, pos:number}  -- chip in a slot stack
-//   {type:'bench', idx:number}              -- bench chip
-let selectedSource = null;
+// selectedName: the player NAME currently selected (or null). Selection is by player,
+// not by location — the same player can appear in multiple places.
+let selectedName = null;
+// benchOrder: optional array of roster idxs for stable bench ordering. Derived list
+// = roster minus anyone primary anywhere.
+let benchOrder = null;
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -685,7 +707,7 @@ function resolveRef(ref) {
 }
 
 function autoAssign(slotArr) {
-  // Only one primary per slot. Everyone else → bench.
+  // Greedy primary-only assignment. Backups stay empty. Bench is derived.
   slotArr.forEach(s => s.players = []);
 
   const priority = ["GK", "CB", "FB", "CM", "W", "ST"];
@@ -707,8 +729,58 @@ function autoAssign(slotArr) {
       available.delete(best);
     }
   }
+}
 
-  return [...available]; // bench
+// True if `name` is the primary (index 0) of any slot.
+function isPrimaryAnywhere(name) {
+  for (const s of slots) {
+    if (s.players.length > 0 && ROSTER[s.players[0]].name === name) return true;
+  }
+  return false;
+}
+
+// Derived bench: every roster player who is not primary anywhere.
+function getDerivedBench() {
+  const out = [];
+  const seen = new Set();
+  // Honor saved bench order first if available
+  if (Array.isArray(benchOrder)) {
+    for (const ri of benchOrder) {
+      if (ri == null || seen.has(ri)) continue;
+      const p = ROSTER[ri];
+      if (!p) continue;
+      if (!isPrimaryAnywhere(p.name)) {
+        out.push(ri);
+        seen.add(ri);
+      }
+    }
+  }
+  ROSTER.forEach((p, ri) => {
+    if (seen.has(ri)) return;
+    if (!isPrimaryAnywhere(p.name)) {
+      out.push(ri);
+      seen.add(ri);
+    }
+  });
+  return out;
+}
+
+// If `name` is currently primary at any slot OTHER than `exceptSlot`, demote it
+// (move it down to index 1 in that slot — keeping it as a backup there).
+function demoteOtherPrimaries(name, exceptSlot) {
+  slots.forEach((s, i) => {
+    if (i === exceptSlot) return;
+    if (s.players.length > 0 && ROSTER[s.players[0]].name === name) {
+      const [ri] = s.players.splice(0, 1);
+      // Insert at index 1 (or push if stack is now empty)
+      if (s.players.length === 0) s.players.push(ri);
+      else s.players.splice(1, 0, ri);
+    }
+  });
+}
+
+function rosterIdxByName(name) {
+  return ROSTER.findIndex(p => p.name === name);
 }
 
 function initFormation(formationKey, restore = null) {
@@ -716,7 +788,8 @@ function initFormation(formationKey, restore = null) {
   slots = buildSlots(formationKey);
 
   if (restore && Array.isArray(restore.slots)) {
-    // Migration: each saved slot may have `players: []` (new), or `player: idx|name|null` (old)
+    // Migration: saved slot may have `players: []` (new), or `player: idx|name|null` (legacy).
+    // For legacy saves we trust slot data and ignore separate bench list.
     restore.slots.forEach((saved, i) => {
       if (i >= slots.length) return;
       if (Array.isArray(saved.players)) {
@@ -726,12 +799,12 @@ function initFormation(formationKey, restore = null) {
         slots[i].players = r === null ? [] : [r];
       }
     });
-    const restoredBench = (restore.bench || []).map(resolveRef).filter(x => x !== null);
-    benchPlayers = restoredBench;
+    benchOrder = (restore.bench || []).map(resolveRef).filter(x => x !== null);
   } else {
-    benchPlayers = autoAssign(slots);
+    autoAssign(slots);
+    benchOrder = null;
   }
-  selectedSource = null;
+  selectedName = null;
 }
 
 // ─────────────────────────────────────────────
@@ -758,7 +831,7 @@ function renderPitch() {
     for (const slotDef of row) {
       const slot = slots[slotIdx];
       const si = slotIdx;
-      const isTarget = !!selectedSource;
+      const isTarget = !!selectedName;
 
       if (slot.players.length === 0) {
         let cls = "slot empty";
@@ -775,15 +848,15 @@ function renderPitch() {
           const isPrimary = pos === 0;
           const tc = TIER_COLORS[p.tier] ?? "#475569";
           const mismatch = !playerFitsGroup(p, slot.group);
-          const isSel = selectedSource && selectedSource.type === "chip"
-                        && selectedSource.slot === si && selectedSource.pos === pos;
+          const isSel = selectedName === p.name;
           let chipCls = "pchip " + (isPrimary ? "pchip-primary" : "pchip-backup");
           if (mismatch) chipCls += " mismatch";
           if (isSel) chipCls += " is-selected";
-          const styleExtra = isPrimary ? `border-left-color:${tc};` : `border-left-color:${tc};`;
-          html += `<div class="${chipCls}" data-slot="${si}" data-pos="${pos}" draggable="true" style="${styleExtra}" title="${escapeHtml(p.name)}">`;
+          const styleExtra = `border-left-color:${tc};`;
+          html += `<div class="${chipCls}" data-slot="${si}" data-pos="${pos}" data-name="${escapeHtml(p.name)}" draggable="true" style="${styleExtra}" title="${escapeHtml(p.name)}">`;
           if (!isPrimary) {
-            html += `<button class="promote-btn" data-promote="${si}-${pos}" title="Move up">↑</button>`;
+            html += `<button class="promote-btn" data-promote="${si}-${pos}" title="Promote">↑</button>`;
+            html += `<button class="remove-btn" data-remove="${si}-${pos}" title="Remove from this slot">×</button>`;
           }
           html += `<div class="pchip-name">${escapeHtml(p.first)}</div>`;
           if (isPrimary) {
@@ -804,17 +877,19 @@ function renderPitch() {
 
 function renderBench() {
   const benchRow = document.getElementById("bench-row");
-  if (benchPlayers.length === 0) {
-    benchRow.innerHTML = `<span style="color:var(--text-muted);font-size:12px;padding:4px 0;">All players assigned</span>`;
+  const benchList = getDerivedBench();
+  if (benchList.length === 0) {
+    benchRow.innerHTML = `<span style="color:var(--text-muted);font-size:12px;padding:4px 0;">All players starting</span>`;
+    attachBenchEvents();
     return;
   }
   let html = "";
-  benchPlayers.forEach((ri, bi) => {
+  benchList.forEach((ri, bi) => {
     const p = ROSTER[ri];
-    const isSelected = selectedSource && selectedSource.type === "bench" && selectedSource.idx === bi;
+    const isSelected = selectedName === p.name;
     const posAbbr = p.positions[0].replace("Central Midfielder","CM").replace("Striker","ST").replace("Goalkeeper","GK");
     const color = TIER_COLORS[p.tier] ?? "#475569";
-    html += `<div class="bench-chip${isSelected ? " is-selected" : ""}" data-bench="${bi}" draggable="true">
+    html += `<div class="bench-chip${isSelected ? " is-selected" : ""}" data-bench="${bi}" data-name="${escapeHtml(p.name)}" draggable="true">
       <span class="bench-chip-name">${p.first}</span>
       <span style="display:flex;align-items:center;gap:3px;">
         <span class="chip-tier" style="background:${color}"></span>
@@ -855,100 +930,107 @@ function render() {
 // INTERACTION
 // ─────────────────────────────────────────────
 
-// ── Source extraction helpers ──
-// Pull a player out of wherever they are right now. Returns roster idx or null.
-function takeFromSource(src) {
-  if (!src) return null;
-  if (src.type === "chip") {
-    const slot = slots[src.slot];
-    if (!slot || src.pos >= slot.players.length) return null;
-    const [ri] = slot.players.splice(src.pos, 1);
-    return ri;
-  }
-  if (src.type === "bench") {
-    if (src.idx >= benchPlayers.length) return null;
-    const [ri] = benchPlayers.splice(src.idx, 1);
-    return ri;
-  }
-  return null;
+// Selection is by player NAME. Tapping a chip toggles selection.
+// Adding to a slot ALWAYS copies (does not remove the player from elsewhere).
+
+function selectName(name) {
+  if (selectedName === name) selectedName = null;
+  else selectedName = name;
+  render();
 }
 
-// Tap on a chip (primary or backup) within a slot stack
+// Add player `name` to slot `si`. If slot is empty → primary (and demote any
+// other primary instance of this name to backup). Otherwise append as backup.
+function addPlayerToSlot(name, si) {
+  const ri = rosterIdxByName(name);
+  if (ri < 0) return;
+  const slot = slots[si];
+  if (!slot) return;
+  if (slot.players.length === 0) {
+    slot.players.push(ri);
+    demoteOtherPrimaries(name, si);
+  } else {
+    // If they're already in this slot's stack, don't add a duplicate copy here.
+    if (slot.players.some(x => ROSTER[x].name === name)) return;
+    slot.players.push(ri);
+  }
+  autoSave();
+}
+
+// Remove a single backup instance from a slot.
+function removeBackup(si, pos) {
+  const slot = slots[si];
+  if (!slot || pos <= 0 || pos >= slot.players.length) return;
+  slot.players.splice(pos, 1);
+  autoSave();
+  render();
+}
+
+// Tap a chip on the pitch — selects (or deselects) this player.
 function handleChipTap(si, pos) {
-  if (!selectedSource) {
-    selectedSource = { type: "chip", slot: si, pos };
+  const slot = slots[si];
+  if (!slot || pos >= slot.players.length) return;
+  const name = ROSTER[slot.players[pos]].name;
+  // If a DIFFERENT player is already selected, treat this tap as "add to this slot"
+  if (selectedName && selectedName !== name) {
+    addPlayerToSlot(selectedName, si);
+    selectedName = null;
     render();
     return;
   }
-  // Same chip — deselect
-  if (selectedSource.type === "chip" && selectedSource.slot === si && selectedSource.pos === pos) {
-    selectedSource = null;
-    render();
-    return;
-  }
-  // Selected chip lives in this same slot → swap positions in stack
-  if (selectedSource.type === "chip" && selectedSource.slot === si) {
-    const stack = slots[si].players;
-    const a = selectedSource.pos, b = pos;
-    [stack[a], stack[b]] = [stack[b], stack[a]];
-    selectedSource = null;
+  selectName(name);
+}
+
+// Tap a slot column (empty space or empty slot).
+function handleSlotTap(si) {
+  if (!selectedName) return;
+  addPlayerToSlot(selectedName, si);
+  selectedName = null;
+  render();
+}
+
+// Tap a bench chip — selects that player. If a different player is already
+// selected, treat as "drop selected onto bench" which means: remove all pitch
+// instances of selectedName (they become bench-only).
+function handleBenchTap(name) {
+  if (selectedName && selectedName !== name) {
+    // Drop selected player onto bench area = remove all pitch instances.
+    removeAllPitchInstances(selectedName);
+    selectedName = null;
     autoSave();
     render();
     return;
   }
-  // Otherwise treat as drop on this slot column (append to end)
-  handleSlotTap(si);
+  selectName(name);
 }
 
-// Tap on the slot column area (background, not a specific chip)
-function handleSlotTap(si) {
-  if (!selectedSource) return; // nothing to do
-  const ri = takeFromSource(selectedSource);
-  selectedSource = null;
-  if (ri === null) { render(); return; }
-  slots[si].players.push(ri);
-  autoSave();
-  render();
+function removeAllPitchInstances(name) {
+  slots.forEach(s => {
+    s.players = s.players.filter(ri => ROSTER[ri].name !== name);
+  });
 }
 
-// Tap on a bench chip
-function handleBenchTap(bi) {
-  if (!selectedSource) {
-    selectedSource = { type: "bench", idx: bi };
-    render();
-    return;
-  }
-  if (selectedSource.type === "bench") {
-    if (selectedSource.idx === bi) {
-      selectedSource = null;
-    } else {
-      selectedSource = { type: "bench", idx: bi };
-    }
-    render();
-    return;
-  }
-  // chip selected, tapping a bench chip → move chip to bench
-  handleBenchAreaTap();
-}
-
-// Tap on bench area background (not on a chip)
+// Tap on bench area background (not on a chip).
 function handleBenchAreaTap() {
-  if (!selectedSource) return;
-  const ri = takeFromSource(selectedSource);
-  selectedSource = null;
-  if (ri === null) { render(); return; }
-  benchPlayers.push(ri);
+  if (!selectedName) return;
+  removeAllPitchInstances(selectedName);
+  selectedName = null;
   autoSave();
   render();
 }
 
-// Promote a backup one position up in the stack
+// Promote a backup one position up. If walked to index 0 (primary), demote any
+// other primary instance of this player.
 function promoteBackup(si, pos) {
   if (pos <= 0) return;
   const stack = slots[si].players;
   if (pos >= stack.length) return;
   [stack[pos - 1], stack[pos]] = [stack[pos], stack[pos - 1]];
-  selectedSource = null;
+  // If now primary here, demote elsewhere.
+  if (pos - 1 === 0) {
+    const name = ROSTER[stack[0]].name;
+    demoteOtherPrimaries(name, si);
+  }
   autoSave();
   render();
 }
@@ -956,7 +1038,7 @@ function promoteBackup(si, pos) {
 // ── Touch events ──
 
 function attachSlotEvents() {
-  // Slot column: click on background → drop selection here (or no-op)
+  // Slot column: click on background → add selected player here.
   document.querySelectorAll(".slot").forEach(el => {
     const si = parseInt(el.dataset.slot);
 
@@ -965,10 +1047,10 @@ function attachSlotEvents() {
       handleSlotTap(si);
     });
 
-    // Drag drop target
+    // Drag drop target — copies player into this slot, does NOT remove from source.
     el.addEventListener("dragover", e => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
+      e.dataTransfer.dropEffect = "copy";
       el.classList.add("drag-over");
     });
     el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
@@ -977,11 +1059,22 @@ function attachSlotEvents() {
       el.classList.remove("drag-over");
       try {
         const data = JSON.parse(e.dataTransfer.getData("text/plain"));
-        const ri = takeFromSource(data);
-        if (ri === null) { render(); return; }
-        slots[si].players.push(ri);
-        selectedSource = null;
-        autoSave();
+        const name = data && data.name;
+        // If this is a pitch chip dragged within its OWN slot, treat as no-op.
+        if (data.type === "chip" && data.slot === si) { render(); return; }
+        if (name) {
+          // If source was a pitch chip from a different slot, remove only that
+          // source instance (so dragging acts like a move between pitch slots
+          // when the source was on the pitch — but bench drags act like copies).
+          if (data.type === "chip" && typeof data.slot === "number" && typeof data.pos === "number") {
+            const srcSlot = slots[data.slot];
+            if (srcSlot && srcSlot.players[data.pos] != null && ROSTER[srcSlot.players[data.pos]].name === name) {
+              srcSlot.players.splice(data.pos, 1);
+            }
+          }
+          addPlayerToSlot(name, si);
+        }
+        selectedName = null;
         render();
       } catch(err) { render(); }
     });
@@ -994,15 +1087,19 @@ function attachSlotEvents() {
 
     el.addEventListener("click", e => {
       e.stopPropagation();
-      // Ignore promote button clicks here — handled separately
-      if (e.target && e.target.classList && e.target.classList.contains("promote-btn")) return;
+      if (e.target && e.target.classList) {
+        if (e.target.classList.contains("promote-btn")) return;
+        if (e.target.classList.contains("remove-btn")) return;
+      }
       handleChipTap(si, pos);
     });
 
     el.addEventListener("dragstart", e => {
       e.stopPropagation();
-      e.dataTransfer.setData("text/plain", JSON.stringify({ type: "chip", slot: si, pos }));
-      e.dataTransfer.effectAllowed = "move";
+      const ri = slots[si] && slots[si].players[pos];
+      const name = ri != null ? ROSTER[ri].name : null;
+      e.dataTransfer.setData("text/plain", JSON.stringify({ type: "chip", slot: si, pos, name }));
+      e.dataTransfer.effectAllowed = "copyMove";
     });
   });
 
@@ -1010,49 +1107,71 @@ function attachSlotEvents() {
   document.querySelectorAll(".promote-btn").forEach(btn => {
     btn.addEventListener("click", e => {
       e.stopPropagation();
+      e.preventDefault();
       const [si, pos] = btn.dataset.promote.split("-").map(Number);
       promoteBackup(si, pos);
     });
+    btn.addEventListener("touchstart", e => { e.stopPropagation(); }, { passive: true });
+  });
+
+  // Remove buttons (backups only)
+  document.querySelectorAll(".remove-btn").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      e.preventDefault();
+      const [si, pos] = btn.dataset.remove.split("-").map(Number);
+      removeBackup(si, pos);
+    });
+    btn.addEventListener("touchstart", e => { e.stopPropagation(); }, { passive: true });
   });
 }
 
 function attachBenchEvents() {
   document.querySelectorAll(".bench-chip").forEach(el => {
-    const bi = parseInt(el.dataset.bench);
+    const name = el.dataset.name;
 
     el.addEventListener("click", e => {
       e.stopPropagation();
-      handleBenchTap(bi);
+      handleBenchTap(name);
     });
 
     el.addEventListener("dragstart", e => {
-      e.dataTransfer.setData("text/plain", JSON.stringify({ type: "bench", idx: bi }));
-      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", JSON.stringify({ type: "bench", name }));
+      e.dataTransfer.effectAllowed = "copy";
     });
   });
 
-  // Bench area background click → drop selection to bench
+  // Bench area background click → drop selected pitch player to bench
   const benchSection = document.getElementById("bench-section");
   if (benchSection && !benchSection.dataset.bound) {
     benchSection.dataset.bound = "1";
     benchSection.addEventListener("click", e => {
-      // ignore clicks on chips (they handle themselves and stop propagation)
       e.stopPropagation();
-      if (selectedSource && selectedSource.type === "chip") {
+      // If selected player has any pitch presence, clicking bench area pulls them off the pitch.
+      if (selectedName && slots.some(s => s.players.some(ri => ROSTER[ri].name === selectedName))) {
         handleBenchAreaTap();
+      } else if (selectedName) {
+        selectedName = null;
+        render();
       }
     });
-    // Drop target
     benchSection.addEventListener("dragover", e => { e.preventDefault(); });
     benchSection.addEventListener("drop", e => {
       e.preventDefault();
       try {
         const data = JSON.parse(e.dataTransfer.getData("text/plain"));
-        const ri = takeFromSource(data);
-        if (ri === null) { render(); return; }
-        benchPlayers.push(ri);
-        selectedSource = null;
-        autoSave();
+        const name = data && data.name;
+        if (!name) { render(); return; }
+        // If source was a pitch chip, remove only that source instance.
+        if (data.type === "chip" && typeof data.slot === "number" && typeof data.pos === "number") {
+          const srcSlot = slots[data.slot];
+          if (srcSlot && srcSlot.players[data.pos] != null && ROSTER[srcSlot.players[data.pos]].name === name) {
+            srcSlot.players.splice(data.pos, 1);
+            autoSave();
+          }
+        }
+        // If source was bench, no-op (already on bench).
+        selectedName = null;
         render();
       } catch(err) { render(); }
     });
@@ -1061,8 +1180,8 @@ function attachBenchEvents() {
 
 // Dismiss selection when tapping background
 document.addEventListener("click", () => {
-  if (selectedSource) {
-    selectedSource = null;
+  if (selectedName) {
+    selectedName = null;
     render();
   }
 });
@@ -1094,7 +1213,7 @@ function autoSave() {
       group: s.group,
       players: s.players.map(ri => ROSTER[ri].name),
     })),
-    bench: benchPlayers.map(ri => ROSTER[ri].name),
+    bench: getDerivedBench().map(ri => ROSTER[ri].name),
     savedAt: new Date().toISOString(),
   };
   localStorage.setItem(key, JSON.stringify(data));
